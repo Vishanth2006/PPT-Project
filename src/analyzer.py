@@ -151,7 +151,7 @@ def analyze_cmyk_array(cmyk_arr, tic_limit=240.0):
     
     avg_tic = c_cov + m_cov + y_cov + k_cov
     max_tic = float(np.max(tic_map))
-    
+   
     # Detect over-inking
     over_inked_mask = tic_map > tic_limit
     over_inked_ratio = (np.sum(over_inked_mask) / tic_map.size) * 100.0
