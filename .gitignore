@@ -1,0 +1,19 @@
+# Virtual Environment
+.venv/
+venv/
+ENV/
+
+# Python Cache & Compiled Files
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# Temporary PDF/TIFF analysis files
+*.tif
+*.tiff
+temp_page_*
