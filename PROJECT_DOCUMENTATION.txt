@@ -1,0 +1,208 @@
+================================================================================
+          PDF CMYK INK COVERAGE ANALYZER - DOCUMENTATION & GUIDE
+================================================================================
+
+This document provides a comprehensive, top-to-bottom overview of the PDF CMYK 
+Ink Coverage Analyzer. It details the technical design, the libraries utilized, 
+the mathematical formulas for ink coverage and cost calculations, and the 
+end-to-end processing pipeline.
+
+--------------------------------------------------------------------------------
+ 1. Executive Summary: How it Works (in Simple Terms)
+--------------------------------------------------------------------------------
+
+To estimate how much ink is required to print a PDF, our system simulates a 
+commercial digital printer. 
+
+First, it takes each page of the digital PDF (which is usually in RGB screen 
+colors) and converts it into high-fidelity CMYK (Cyan, Magenta, Yellow, and 
+Black) color plates, which represent the actual physical inks. 
+
+Next, the system looks at every individual pixel on the page and measures the 
+exact amount of each color ink being sprayed there. By averaging these pixel 
+measurements, it determines the coverage percentage for each color (for example, 
+a 5% black coverage means the printed text takes up 5% of the page area). 
+
+Then, it measures the physical height and width of the PDF pages in meters and 
+uses a standard consumption rate to figure out exactly how many milliliters 
+of ink each page will use. 
+
+Finally, it matches these milliliters against your cartridge prices to calculate 
+the exact cost in dollars, while also warning you if too many inks are layered 
+on top of each other in the same spot, which could cause the wet ink to smudge 
+or warp the paper.
+
+--------------------------------------------------------------------------------
+ 2. System Workflow Diagram
+--------------------------------------------------------------------------------
+
+           +---------------------------------------+
+           |        Upload PDF Document            |
+           +---------------------------------------+
+                               |
+                               v
+           +---------------------------------------+
+           |       Validate PDF via PyMuPDF        |
+           +---------------------------------------+
+                               |
+                               v
+           +---------------------------------------+
+           |          CMYK Page Rendering          |
+           | (Ghostscript TIFF / PyMuPDF Fallback) |
+           +---------------------------------------+
+                               |
+                               v
+           +---------------------------------------+
+           |     Extract C, M, Y, K Channels       |
+           |     as 32-bit Numeric NumPy Arrays     |
+           +---------------------------------------+
+                               |
+                               v
+           +---------------------------------------+
+           |  Calculate Individual Coverage (%) &  |
+           |   Total Ink Coverage (TIC) Map (%)    |
+           +---------------------------------------+
+                               |
+                               v
+           +---------------------------------------+
+           |  Project Ink Volumes (ml) & Costs ($) |
+           |  Flag Over-Inked regions (> Threshold) |
+           +---------------------------------------+
+                               |
+                               v
+           +---------------------------------------+
+           |    Output: Web Dashboard & Reports    |
+           |       (CSV Logs / PDF Summaries)      |
+           +---------------------------------------+
+
+--------------------------------------------------------------------------------
+ 3. Libraries Used & Purpose
+--------------------------------------------------------------------------------
+
++------------------+-----------+-----------------------------------------------+
+| Library Name     | Version   | Primary Purpose in Project                    |
++------------------+-----------+-----------------------------------------------+
+| Streamlit        | ^1.30.0   | Web dashboard interface, sidebar configs.     |
+| PyMuPDF (fitz)   | ^1.23.0   | PDF validation, dimensions, CMYK fallback.    |
+| Pillow (PIL)     | ^10.0.0   | Image loading, transparency blending.         |
+| NumPy            | ^1.24.0   | High-speed channel calculations on arrays.     |
+| Plotly           | ^5.15.0   | Dynamic, responsive dashboard charts.         |
+| ReportLab        | ^4.0.0    | Compiles professional, multi-page PDF reports.|
+| Matplotlib       | ^3.7.0    | Generates false-color density heatmaps.       |
++------------------+-----------+-----------------------------------------------+
+
+--------------------------------------------------------------------------------
+ 4. The Core Calculations & Formulas
+--------------------------------------------------------------------------------
+
+Here are the step-by-step formulas used to convert a PDF document's layout into 
+ink percentages, volumes, and costs.
+
+A. Page Area Calculation
+   PDF page dimensions are originally stored in points (pt), where 1 point 
+   is 1/72 of an inch.
+   
+   1. Width (inches) = Width (points) / 72
+   2. Height (inches) = Height (points) / 72
+   3. Width (meters) = Width (inches) * 0.0254
+   4. Height (meters) = Height (inches) * 0.0254
+   5. Page Area (sq. meters) = Width (meters) * Height (meters)
+
+B. Channel Ink Coverage (%)
+   When we render a page in CMYK mode, each pixel contains density levels for 
+   Cyan, Magenta, Yellow, and Black ranging from 0 (no ink) to 255 (fully 
+   saturated color).
+   
+   - Channel Coverage (%) = 
+     (Sum of all Pixel Densities for this Channel / (255 * Total Pixels)) * 100
+
+   This tells us what percentage of the page is covered by that specific color. 
+   (For example, 2% coverage means if you packed all that color's ink together, 
+   it would cover 2% of the page area).
+
+C. Total Ink Coverage (TIC) & Over-Inking
+   To prevent wet ink from smudging or warping the paper during physical printing, 
+   we calculate the combined thickness of the four layered inks at every pixel.
+   
+   1. TIC per Pixel (%) = Cyan (%) + Magenta (%) + Yellow (%) + Black (%)
+      * Since there are 4 inks, the maximum possible TIC is 400%.
+      
+   2. Over-Inking Check:
+      If a pixel's TIC exceeds the threshold (typically 240% for uncoated paper 
+      or 300% for glossy paper), it is flagged as "Over-inked".
+      
+   3. Over-Inked Area Ratio (%) = 
+      (Number of Over-Inked Pixels / Total Number of Pixels) * 100
+
+D. Ink Volume Consumption
+   We calculate the volume of liquid ink required based on the page area and 
+   coverage percentage. The default ink consumption rate is 1.5 milliliters per 
+   square meter (ml/m2) for a 100% solid color block.
+   
+   - Volume Used (ml) = 
+     Page Area (sq. meters) * (Channel Coverage (%) / 100) * Consumption Rate
+
+E. Printing Cost Calculation
+   Using the price and capacity of your cartridges:
+   
+   1. Cost per ml = Cartridge Price ($) / Cartridge Volume (ml)
+   2. Channel Cost ($) = Volume Used (ml) * Cost per ml
+   3. Total Page Cost ($) = Cyan Cost + Magenta Cost + Yellow Cost + Black Cost
+
+--------------------------------------------------------------------------------
+ 5. End-to-End Workflow & Processing Stages
+--------------------------------------------------------------------------------
+
+Stage 1: Upload and Validation
+  * Actions: The user uploads a file through the Streamlit sidebar.
+  * Validation: The system checks if the file exists, checks that the file size 
+    is under 50MB (to prevent web server crashes), and opens it using PyMuPDF 
+    to verify that it is a healthy, readable PDF document.
+
+Stage 2: Page Rendering (CMYK Separation Extraction)
+  * Primary Engine (Ghostscript): The system attempts to run Ghostscript via a 
+    subprocess using the 'tiff32nc' device at the selected DPI. This device 
+    outputs a high-fidelity 32-bit CMYK TIFF image separation.
+  * Secondary Engine (PyMuPDF Fallback): If Ghostscript is not in the system's 
+    'PATH' variables, the backend falls back to PyMuPDF. It rasterizes the page 
+    into an RGB canvas, converts it using PyMuPDF's internal color converters, 
+    and outputs a 32-bit CMYK pixel stream.
+
+Stage 3: Numeric Analysis (NumPy Channel Split)
+  * Actions: The 32-bit CMYK image is loaded into a 3D NumPy array of shape 
+    (Height, Width, 4).
+  * Separation: The array is sliced into four 2D arrays: Channel 0 (Cyan), 
+    Channel 1 (Magenta), Channel 2 (Yellow), Channel 3 (Black).
+  * Averages: Calculates the average channel coverage for the page.
+  * TIC Matrix: Sums the sliced channel arrays to construct a single Height x Width 
+    matrix representing the TIC values across the page coordinates.
+
+Stage 4: Over-Inking Overlay & Visual Heatmap
+  * Heatmap: The TIC matrix values (normalized to 0..1) are mapped to a 
+    Matplotlib colormap ('jet' or 'viridis') to generate a false-color density image.
+  * Overlay: Every pixel matching the over-inked criteria (TIC > Threshold) 
+    is colored bright magenta/neon pink.
+  * Blending: The false-color heatmap is blended with a semi-transparent version 
+    of the original RGB layout preview image using PIL:
+    - Final Blended Image = (Heatmap Image * opacity) + (Original Image * (1 - opacity))
+    This creates a blended page explorer preview showing exactly where text 
+    and graphics are over-saturating the paper.
+
+Stage 5: Cost & Ink Volume Projections
+  * Actions: The coverage percentages and dimensions are passed to 
+    'src/cost_estimator.py'.
+  * Calculations: Calculates the physical page dimensions, maps coverage to 
+    milliliters of ink, and applies the user's cartridge specifications to 
+    project the costs.
+
+Stage 6: Dashboard Rendering & Exports
+  * UI Components: Displays document KPIs, clustered bar charts of coverages 
+    per page, and a pie chart of the document's total CMYK ink ratio.
+  * Interactive Page Explorer: Displays the original page layout next to the 
+    false-color blended over-inking heatmap.
+  * Report Downloads:
+    - CSV Report: Compiled with page-by-page numbers, individual coverages, 
+      volumes, and costs.
+    - PDF Report: Built with ReportLab using a custom canvas to draw flowables, 
+      page numbers, KPI summaries, and structured data tables.
+================================================================================
